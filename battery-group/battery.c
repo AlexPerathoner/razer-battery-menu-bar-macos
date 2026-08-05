@@ -6,6 +6,7 @@
 //
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "battery.h"
 #include "razerdevice.h"
 #include "razermouse_driver.h"
@@ -39,16 +40,11 @@ int get_battery_level(void) {
         if (is_device_wireless(device.productId))
         {
             printf("%#06x\n", device.productId);
-
-            char battery_level[10];                                                        // Buffer to hold raw battery level
+            char battery_level[10] = {0};                                                  // Buffer to hold raw battery level
             ssize_t result = razer_attr_read_get_battery(device.usbDevice, battery_level); // Assuming usbDevice is accessible
             if (result > 0)
             {
-                // Convert the raw battery level to an integer
-                int battery_level_raw = (unsigned char)battery_level[0]; // Assuming the first byte contains the battery level
-                printf("Battery level raw: %d\n", battery_level_raw);
-                // Scale result from 0-255 to 0-100
-                int battery_level_percent = (battery_level_raw * 100) / 255;
+                int battery_level_percent = atoi(battery_level);
                 printf("Battery level: %d%%\n", battery_level_percent);
                 closeAllRazerDevices(allDevices);
                 return battery_level_percent;
