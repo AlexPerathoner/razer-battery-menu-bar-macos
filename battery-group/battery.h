@@ -9,7 +9,9 @@
 #ifndef BATTERY_H
 #define BATTERY_H
 
-int get_battery_level(void);
-int is_charging(void);
+// Reads battery percentage (0-100) and charging state in one device enumeration.
+// Returns -1 if no battery device was found or the read failed.
+// *charging is set to 0/1, or left at -1 if it could not be read.
+int get_battery_status(int *charging);
 
 #endif

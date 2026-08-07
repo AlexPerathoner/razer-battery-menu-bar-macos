@@ -9,48 +9,98 @@ import Foundation
 import UserNotifications
 import Cocoa
 
-class BatteryMonitor: ObservableObject {
-    @Published var batteryLevel: Int = 100
-    @Published var errorMessage = ""
-    @Published var isCharging: Bool = false
-    @Published var sentNotification: Bool = false
+class BatteryMonitor {
+    // nil means "no reading yet / last read failed" - distinct from a real percentage,
+    // so a failed read can never be displayed as a confident 100%.
+    private(set) var batteryLevel: Int?
+    private(set) var errorMessage = ""
+    private(set) var isCharging: Bool?
+    private var sentNotification: Bool = false
+
+    /// Called on the main thread after every reading. The UI layer is plain AppKit,
+    /// so there is no SwiftUI observation to lean on.
+    var onChange: (() -> Void)?
 
     private var timer: Timer?
+    private var isReading = false
+    private var lastReadAt: Date?
+    /// A read walks the whole USB device tree and opens every Razer peripheral, so
+    /// reopening the menu repeatedly should not trigger one enumeration per open.
+    private let minimumReadInterval: TimeInterval = 15
+    // An LSUIElement app is eligible for App Nap, which defers the poll timer
+    // indefinitely while the app sits idle in the background.
+    private var activity: NSObjectProtocol?
 
     init() {
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: .background,
+            reason: "Polling Razer mouse battery"
+        )
         startMonitoringBattery()
         requestNotificationAuthorization()
     }
 
-    func startMonitoringBattery() {
-        timer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { _ in
-            self.updateBatteryLevel()
+    deinit {
+        timer?.invalidate()
+        if let activity {
+            ProcessInfo.processInfo.endActivity(activity)
         }
+    }
+
+    func startMonitoringBattery() {
+        let timer = Timer(timeInterval: 120, repeats: true) { [weak self] _ in
+            self?.updateBatteryLevel()
+        }
+        timer.tolerance = 10
+        // .common so the timer keeps firing while the menu bar menu is open.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
         updateBatteryLevel()
     }
 
-    func updateBatteryLevel() {
-        let level = get_battery_level()
-        DispatchQueue.main.async {
-            if level != -1 {
-                self.batteryLevel = Int(level)
-                if level < 20 && !self.sentNotification {
-                    self.sendLowBatteryNotification()
-                }
-                self.errorMessage = ""
-            } else {
-                self.errorMessage = "Could not get battery level"
-            }
+    /// - Parameter force: bypass the debounce, for an explicit user-requested refresh.
+    func updateBatteryLevel(force: Bool = false) {
+        // USB I/O blocks - never run it on the main thread, and never overlap two reads.
+        guard !isReading else { return }
+        if !force, let lastReadAt, Date().timeIntervalSince(lastReadAt) < minimumReadInterval {
+            return
+        }
+        isReading = true
 
-            let is_charging = is_charging()
-            if is_charging != -1 {
-                self.isCharging = (is_charging != 0)
-                if self.sentNotification && self.isCharging {
-                    self.sentNotification = false
-                }
-            } else {
-                self.errorMessage += " Could not get charging status"
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var charging: Int32 = -1
+            let level = get_battery_status(&charging)
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isReading = false
+                self.lastReadAt = Date()
+                self.apply(level: level, charging: charging)
             }
+        }
+    }
+
+    private func apply(level: Int32, charging: Int32) {
+        defer { onChange?() }
+
+        guard level != -1 else {
+            // Surface the failure instead of leaving a stale value on screen.
+            batteryLevel = nil
+            isCharging = nil
+            errorMessage = "Could not read the mouse battery. Is it connected and awake?"
+            return
+        }
+
+        errorMessage = ""
+        batteryLevel = Int(level)
+
+        isCharging = (charging == -1) ? nil : (charging != 0)
+        if isCharging == true {
+            sentNotification = false
+        }
+
+        if level < 20 && isCharging != true && !sentNotification {
+            sendLowBatteryNotification()
         }
     }
 
