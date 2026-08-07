@@ -10,7 +10,6 @@
 
 import AppKit
 
-@main
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let batteryMonitor = BatteryMonitor()
     private var statusItem: NSStatusItem?
@@ -32,7 +31,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(levelItem)
         menu.addItem(chargingItem)
         menu.addItem(errorItem)
-        menu.addItem(NSMenuItem(title: "Update", action: #selector(updateNow), keyEquivalent: "", target: self))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "By Alex Pera", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q", target: self))
@@ -50,11 +48,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Paint current state first: if a read is already in flight, updateBatteryLevel()
         // returns immediately and would otherwise leave the menu unrepainted.
         render()
-        batteryMonitor.updateBatteryLevel()
-    }
-
-    @objc private func updateNow() {
-        // Explicit user request: always hit the hardware, debounce or not.
+        // Opening the menu is an explicit user request, and is now the only way to ask for a
+        // reading: skip the debounce rather than showing one up to `minimumReadInterval` old.
         batteryMonitor.updateBatteryLevel(force: true)
     }
 
@@ -112,6 +107,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return nil
     }
 
+    /// The mouse glyph. `computermouse` is SF Symbols 4, so it resolves on macOS 13+ and
+    /// draws as vector; on macOS 12 nothing matches and the bundled raster asset stands in.
+    private func logoImage(config: NSImage.SymbolConfiguration) -> NSImage? {
+        symbolImage(names: ["computermouse", "magicmouse"])?.withSymbolConfiguration(config)
+            ?? NSImage(named: "Image")
+    }
+
     /// Draws the logo and the battery symbol side by side, replacing the SwiftUI
     /// ImageRenderer used before.
     private func composedImage(names: [String]) -> NSImage? {
@@ -124,33 +126,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let spacing: CGFloat = 2
 
         // One source of truth for "is there a logo to draw, and how wide is it".
-        let logo = NSImage(named: "Image")
+        let logo = logoImage(config: config)
+        // Integral width: a fractional one would land the symbol on a half pixel and soften both.
         let logoWidth: CGFloat? = logo.flatMap { logo in
-            logo.size.height > 0 ? logo.size.width * (height / logo.size.height) : nil
+            logo.size.height > 0 ? (logo.size.width * (height / logo.size.height)).rounded() : nil
         }
 
         let symbolSize = symbol.size
         let symbolX = logoWidth.map { $0 + spacing } ?? 0
-        let total = CGSize(width: symbolX + symbolSize.width, height: max(height, symbolSize.height))
+        let total = CGSize(width: (symbolX + symbolSize.width).rounded(.up), height: max(height, symbolSize.height))
         guard total.width > 0 else { return nil }
 
-        let image = NSImage(size: total)
-        image.lockFocus()
-        if let logo, let logoWidth {
-            logo.draw(in: NSRect(
-                x: 0,
-                y: (total.height - height) / 2,
-                width: logoWidth,
-                height: height
+        // A drawing handler runs again for every backing scale the image is asked to draw at,
+        // so the symbol stays vector-sharp. lockFocus() froze it into a bitmap at whatever
+        // scale the main screen happened to have, which resampled on any other display.
+        let image = NSImage(size: total, flipped: false) { _ in
+            if let logo, let logoWidth {
+                logo.draw(in: NSRect(
+                    x: 0,
+                    y: ((total.height - height) / 2).rounded(),
+                    width: logoWidth,
+                    height: height
+                ))
+            }
+            symbol.draw(in: NSRect(
+                x: symbolX,
+                y: ((total.height - symbolSize.height) / 2).rounded(),
+                width: symbolSize.width,
+                height: symbolSize.height
             ))
+            return true
         }
-        symbol.draw(in: NSRect(
-            x: symbolX,
-            y: (total.height - symbolSize.height) / 2,
-            width: symbolSize.width,
-            height: symbolSize.height
-        ))
-        image.unlockFocus()
         // Template rendering lets the menu bar tint the icon for light/dark automatically,
         // replacing the hardcoded .colorScheme(.dark) the SwiftUI version needed.
         image.isTemplate = true
