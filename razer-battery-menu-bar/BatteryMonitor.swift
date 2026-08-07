@@ -48,10 +48,12 @@ class BatteryMonitor {
     }
 
     func startMonitoringBattery() {
-        let timer = Timer(timeInterval: 120, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 10 * 60, repeats: true) { [weak self] _ in
             self?.updateBatteryLevel()
         }
-        timer.tolerance = 10
+        // Opening the menu always forces a fresh read, so this poll only has to keep the
+        // low-battery notification timely - a wide tolerance lets the system coalesce it.
+        timer.tolerance = 60
         // .common so the timer keeps firing while the menu bar menu is open.
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
