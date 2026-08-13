@@ -41,6 +41,9 @@ int is_battery_device(UInt16 productId) {
         case USB_DEVICE_ID_RAZER_ATHERIS_RECEIVER:
         case USB_DEVICE_ID_RAZER_OROCHI_V2_RECEIVER:
         case USB_DEVICE_ID_RAZER_OROCHI_V2_BLUETOOTH:
+        case USB_DEVICE_ID_RAZER_VIPER_V3_HYPERSPEED:
+        case USB_DEVICE_ID_RAZER_VIPER_V3_PRO_WIRED:
+        case USB_DEVICE_ID_RAZER_VIPER_V3_PRO_WIRELESS:
             return 1;
         default:
             return 0;
