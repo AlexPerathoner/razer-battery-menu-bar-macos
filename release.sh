@@ -29,6 +29,11 @@ for arch in arm64 x86_64; do
 done
 echo "✓ universal build: $ARCHS_BUILT"
 
+# ditto, not zip: it preserves the bundle's symlinks and resource forks, so the
+# unpacked app still passes its signature check.
+rm -f "./out/razer-battery-menu-bar.zip"
+ditto -c -k --sequesterRsrc --keepParent "./out/$APP_NAME" "./out/razer-battery-menu-bar.zip"
+
 unset APPLE_ID
 unset APPLE_ID_PASSWORD
 

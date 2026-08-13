@@ -1,0 +1,3 @@
+[submodule "battery-group/librazermacos"]
+	path = battery-group/librazermacos
+	url = https://github.com/alexjsp/librazermacos.git
