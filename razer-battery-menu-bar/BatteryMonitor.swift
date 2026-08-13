@@ -10,11 +10,14 @@ import UserNotifications
 import Cocoa
 
 class BatteryMonitor {
-    // nil means "no reading yet / last read failed" - distinct from a real percentage,
-    // so a failed read can never be displayed as a confident 100%.
+    // The last reading that succeeded; nil only until the first one does. A failed read
+    // leaves it alone - the mouse sleeping for a minute should not blank the menu bar - and
+    // reports itself through `errorMessage` instead.
     private(set) var batteryLevel: Int?
     private(set) var errorMessage = ""
     private(set) var isCharging: Bool?
+    /// When `batteryLevel` was last refreshed, so a stale reading can say how stale it is.
+    private(set) var lastSuccessfulReadAt: Date?
     private var sentNotification: Bool = false
 
     /// Called on the main thread after every reading. The UI layer is plain AppKit,
@@ -82,19 +85,28 @@ class BatteryMonitor {
         }
     }
 
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
+
     private func apply(level: Int32, charging: Int32) {
         defer { onChange?() }
 
         guard level != -1 else {
-            // Surface the failure instead of leaving a stale value on screen.
-            batteryLevel = nil
-            isCharging = nil
-            errorMessage = "Could not read the mouse battery. Is it connected and awake?"
+            // Keep the last reading on screen: dropping to "unknown" would draw an empty
+            // battery, which reads as a real 0% rather than as a failed read.
+            errorMessage = lastSuccessfulReadAt.map {
+                "Could not read the mouse battery. Showing the reading from \(Self.timeFormatter.string(from: $0))."
+            } ?? "Could not read the mouse battery. Is it connected and awake?"
             return
         }
 
         errorMessage = ""
         batteryLevel = Int(level)
+        lastSuccessfulReadAt = Date()
 
         isCharging = (charging == -1) ? nil : (charging != 0)
         if isCharging == true {
