@@ -7,9 +7,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <CoreFoundation/CFNumber.h>
 #include "battery.h"
 #include "razerdevice.h"
 #include "razermouse_driver.h"
+#include "razerchromacommon.h"
 
 
 /**
@@ -48,6 +50,63 @@ int is_battery_device(UInt16 productId) {
         default:
             return 0;
     }
+}
+
+// librazermacos does not enumerate the Naga V2 HyperSpeed receiver yet.
+static int get_naga_v2_battery(int *charging) {
+    CFMutableDictionaryRef matching = IOServiceMatching(kIOUSBDeviceClassName);
+    if (matching == NULL) {
+        return -1;
+    }
+    int vendor = USB_VENDOR_ID_RAZER, product = 0x00B4;
+    CFNumberRef vendorId = CFNumberCreate(NULL, kCFNumberIntType, &vendor);
+    CFNumberRef productId = CFNumberCreate(NULL, kCFNumberIntType, &product);
+    CFDictionarySetValue(matching, CFSTR(kUSBVendorID), vendorId);
+    CFDictionarySetValue(matching, CFSTR(kUSBProductID), productId);
+    CFRelease(vendorId);
+    CFRelease(productId);
+
+    io_service_t service = IOServiceGetMatchingService(MACH_PORT_NULL, matching);
+    if (service == IO_OBJECT_NULL) {
+        return -1;
+    }
+    IOCFPlugInInterface **plugin = NULL;
+    SInt32 score;
+    IOReturn result = IOCreatePlugInInterfaceForService(
+        service, kIOUSBDeviceUserClientTypeID, kIOCFPlugInInterfaceID, &plugin, &score);
+    IOObjectRelease(service);
+    if (result != kIOReturnSuccess || plugin == NULL) {
+        return -1;
+    }
+    IOUSBDeviceInterface **dev = NULL;
+    HRESULT query = (*plugin)->QueryInterface(
+        plugin, CFUUIDGetUUIDBytes(kIOUSBDeviceInterfaceID), (LPVOID *)&dev);
+    (*plugin)->Release(plugin);
+    if (query != 0 || dev == NULL) {
+        return -1;
+    }
+    if ((*dev)->USBDeviceOpen(dev) != kIOReturnSuccess) {
+        (*dev)->Release(dev);
+        return -1;
+    }
+
+    struct razer_report request = razer_chroma_misc_get_battery_level();
+    struct razer_report response = {0};
+    request.transaction_id.id = 0x1f;
+    request.crc = razer_calculate_crc(&request);
+    result = razer_get_usb_response(dev, 0, &request, 0, &response,
+                                    RAZER_NEW_MOUSE_RECEIVER_WAIT_MIN_US);
+    (*dev)->USBDeviceClose(dev);
+    (*dev)->Release(dev);
+    if (result != kIOReturnSuccess || response.status != RAZER_CMD_SUCCESSFUL ||
+        response.command_class != request.command_class ||
+        response.command_id.id != request.command_id.id || response.arguments[1] == 0) {
+        return -1;
+    }
+    if (charging != NULL) {
+        *charging = 0; // This model uses an AA battery.
+    }
+    return (response.arguments[1] * 100) / 255;
 }
 
 /**
@@ -112,11 +171,15 @@ int get_battery_status(int *charging) {
         break;
     }
 
+    closeAllRazerDevices(allDevices);
+    if (level == -1) {
+        level = get_naga_v2_battery(charging);
+    }
+
     if (level == -1)
     {
         printf("No Razer battery device found (%d Razer device(s) enumerated).\n", allDevices.size);
     }
 
-    closeAllRazerDevices(allDevices);
     return level;
 }
